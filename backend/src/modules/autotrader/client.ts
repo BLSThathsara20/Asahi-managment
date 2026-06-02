@@ -59,6 +59,28 @@ export type AutotraderFetchInit = {
 	body?: unknown;
 };
 
+function extractAutotraderErrorMessage(data: unknown, status: number): string {
+	if (data && typeof data === "object") {
+		const o = data as {
+			message?: string;
+			error?: string;
+			messages?: Array<{ type?: string; message?: string }>;
+			warnings?: Array<{ message?: string }>;
+		};
+
+		const featureError = o.messages?.find((m) => m?.message)?.message;
+		if (featureError) return featureError;
+
+		const warning = o.warnings?.find((w) => w?.message)?.message;
+		if (warning) return warning;
+
+		if (typeof o.message === "string" && o.message) return o.message;
+		if (typeof o.error === "string" && o.error) return o.error;
+	}
+
+	return `Auto Trader request failed (${status})`;
+}
+
 export async function autotraderFetch<T = unknown>(
 	path: string,
 	query?: Record<string, string | number | undefined>,
@@ -89,11 +111,7 @@ export async function autotraderFetch<T = unknown>(
 
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok) {
-		const payload = data as { message?: string; error?: string };
-		const msg =
-			payload.message ||
-			payload.error ||
-			`Auto Trader request failed (${res.status})`;
+		const msg = extractAutotraderErrorMessage(data, res.status);
 		const status = res.status === 401 ? 502 : res.status >= 500 ? 502 : 400;
 		throw new ApiError("autotrader_api_error", msg, status);
 	}

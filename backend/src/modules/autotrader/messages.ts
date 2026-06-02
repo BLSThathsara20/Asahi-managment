@@ -3,32 +3,28 @@ import { ApiError } from "../../app/errors";
 import { getAutotraderConfig } from "./config";
 import { autotraderFetch } from "./client";
 import { getAutotraderConnectStatus } from "./diagnostics";
+import { getDealById, type DealRecord } from "./dealsApi";
+import {
+	getMessagesComponentAllPages,
+	markMessagesComponentRead,
+	postMessagesComponent,
+	type MessageLine,
+	type MessagesResource,
+} from "./messagesApi";
+import {
+	AUTOTRADER_RESPONSE_TTL_MS,
+	cacheKey,
+	getCachedResponse,
+	invalidateAutotraderCache,
+	setCachedResponse,
+} from "./responseCache";
+import { throwMessageThreadNotFound } from "./messagesErrors";
 
-type DealRow = {
-	dealId?: string;
-	advertiserId?: string;
-	created?: string;
-	lastUpdated?: string;
-	advertiserDealStatus?: string;
-	consumer?: {
-		firstName?: string | null;
-		lastName?: string | null;
-		email?: string | null;
-		phone?: string | null;
-	};
-	stock?: { stockId?: string | null; searchId?: string | null };
-	messages?: { id?: string | null; lastUpdated?: string | null };
-};
+type DealRow = DealRecord;
 
 type DealsListResponse = {
 	results?: DealRow[];
 	totalResults?: number;
-};
-
-type MessageLine = {
-	from?: string;
-	at?: string;
-	message?: string;
 };
 
 export type MessageThread = {
@@ -44,15 +40,6 @@ export type MessageThread = {
 	lastMessage: MessageLine | null;
 	lastActivityAt: string | null;
 	messages: MessageLine[];
-};
-
-type MessagesResource = {
-	messagesId?: string;
-	consumerLastRead?: string;
-	consumerLastReadStatus?: string;
-	advertiserLastRead?: string;
-	advertiserLastReadStatus?: string;
-	messages?: MessageLine[];
 };
 
 const DEALS_PAGE_SIZE = 50;
@@ -87,12 +74,15 @@ async function fetchAllDeals(maxPages = MAX_DEAL_PAGES): Promise<{
 	return { deals, totalResults, pagesFetched: totalPages };
 }
 
-async function fetchMessageThread(messagesId: string): Promise<MessagesResource> {
-	const { advertiserId } = getAutotraderConfig();
-	return autotraderFetch<MessagesResource>(
-		`/messages/${encodeURIComponent(messagesId)}`,
-		{ advertiserId },
-	);
+async function fetchMessageThread(
+	messagesComponentId: string,
+): Promise<MessagesResource & { pagesLoaded?: number }> {
+	return getMessagesComponentAllPages(messagesComponentId);
+}
+
+function resolveComponentId(deal: DealRow, explicitMessageId?: string): string | null {
+	if (explicitMessageId?.trim()) return explicitMessageId.trim();
+	return deal.messages?.id ?? deal.dealId ?? null;
 }
 
 function sortMessagesNewestFirst(lines: MessageLine[]): MessageLine[] {
@@ -179,12 +169,108 @@ async function mapWithConcurrency<T, R>(
 	return results;
 }
 
+export async function lookupAutotraderMessages(
+	req: Request,
+	res: Response,
+	next: NextFunction,
+) {
+	try {
+		const dealId =
+			typeof req.query.dealId === "string" ? req.query.dealId.trim() : "";
+		const messageId =
+			typeof req.query.messageId === "string" ? req.query.messageId.trim() : "";
+
+		const probe: Record<string, unknown> = {
+			endpoints: {
+				listMessages: {
+					url: "GET /messages?advertiserId=…",
+					note: "Returns 405 on sandbox — listing is via GET /deals then GET /messages/:id",
+				},
+				messageThread: "GET /messages/:messageId?advertiserId=…&page=1",
+				dealDetail: "GET /deals/:dealId?advertiserId=…",
+			},
+		};
+
+		if (dealId) {
+			try {
+				const deal = await getDealById(dealId);
+				probe.deal = deal;
+				const componentId = resolveComponentId(deal, messageId);
+				if (componentId) {
+					probe.messages = await fetchMessageThread(componentId);
+					probe.messagesComponentId = componentId;
+				}
+			} catch (e) {
+				probe.dealError = e instanceof Error ? e.message : String(e);
+			}
+		} else if (messageId) {
+			try {
+				probe.messages = await fetchMessageThread(messageId);
+				probe.messagesComponentId = messageId;
+			} catch (e) {
+				probe.messagesError = e instanceof Error ? e.message : String(e);
+			}
+		} else {
+			throw new ApiError(
+				"invalid_payload",
+				"Provide dealId and/or messageId query parameter.",
+				400,
+			);
+		}
+
+		const connectStatus = await getAutotraderConnectStatus(
+			typeof probe.deal === "object" && probe.deal ? 1 : 0,
+		);
+
+		return res.json({ probe, connectStatus });
+	} catch (e) {
+		return next(e);
+	}
+}
+
 export async function listAutotraderMessages(
 	req: Request,
 	res: Response,
 	next: NextFunction,
 ) {
 	try {
+		const { advertiserId } = getAutotraderConfig();
+		const forceRefresh = req.query.refresh === "1";
+		const lookupDealId =
+			typeof req.query.dealId === "string" ? req.query.dealId.trim() : "";
+		const listKey = lookupDealId
+			? cacheKey(["messages", "list", advertiserId, lookupDealId])
+			: cacheKey(["messages", "list", advertiserId]);
+
+		if (!forceRefresh && req.query.page == null && !lookupDealId) {
+			const cached = getCachedResponse<Record<string, unknown>>(listKey);
+			if (cached) return res.json(cached);
+		}
+
+		if (lookupDealId) {
+			const deal = await getDealById(lookupDealId);
+			const componentId = resolveComponentId(deal, "");
+			let thread: MessageThread | null = null;
+			if (componentId) {
+				try {
+					const resource = await fetchMessageThread(componentId);
+					thread = buildThread(deal, resource);
+				} catch {
+					thread = null;
+				}
+			}
+			const connectStatus = await getAutotraderConnectStatus(1);
+			return res.json({
+				threads: thread ? [thread] : [],
+				totalDeals: 1,
+				dealsScanned: 1,
+				pagesFetched: 1,
+				threadsWithMessages: thread ? 1 : 0,
+				connectStatus,
+				loadedVia: "deals/:dealId",
+			});
+		}
+
 		const singlePage = req.query.page != null;
 		let deals: DealRow[] = [];
 		let totalResults = 0;
@@ -213,14 +299,24 @@ export async function listAutotraderMessages(
 
 		const connectStatus = await getAutotraderConnectStatus(totalResults);
 
-		return res.json({
+		const payload = {
 			threads,
 			totalDeals: totalResults,
 			dealsScanned: candidates.length,
 			pagesFetched,
 			threadsWithMessages: threads.length,
 			connectStatus,
-		});
+		};
+
+		if (!singlePage) {
+			const listTtl =
+				totalResults > 0 || threads.length > 0
+					? AUTOTRADER_RESPONSE_TTL_MS.messagesList
+					: 30_000;
+			setCachedResponse(listKey, payload, listTtl);
+		}
+
+		return res.json(payload);
 	} catch (e) {
 		return next(e);
 	}
@@ -237,36 +333,97 @@ export async function getAutotraderMessagesById(
 			throw new ApiError("invalid_payload", "messagesId is required.", 400);
 		}
 
-		let resource: MessagesResource | null = null;
+		const dealIdQuery =
+			typeof req.query.dealId === "string" ? req.query.dealId.trim() : "";
+
+		const { advertiserId } = getAutotraderConfig();
+		const forceRefresh = req.query.refresh === "1";
+		const detailKey = cacheKey([
+			"messages",
+			"detail",
+			advertiserId,
+			messagesId,
+			dealIdQuery,
+		]);
+
+		if (!forceRefresh) {
+			const cached = getCachedResponse<{ thread: unknown }>(detailKey);
+			if (cached) return res.json(cached);
+		}
+
+		// Portal URLs use deal id in the path — try it as dealId even without ?dealId=
+		const dealIdToLoad = dealIdQuery || messagesId;
+		let deal: DealRow | null = null;
+		let dealLookupFailed = true;
 		try {
-			resource = await fetchMessageThread(messagesId);
+			deal = await getDealById(dealIdToLoad);
+			dealLookupFailed = false;
+		} catch {
+			deal = null;
+		}
+
+		const componentId = deal
+			? (resolveComponentId(deal, messagesId) ?? messagesId)
+			: messagesId;
+
+		let resource: (MessagesResource & { pagesLoaded?: number }) | null = null;
+		let messagesLookupFailed = true;
+		try {
+			resource = await fetchMessageThread(componentId);
+			if (resource.messages?.length) messagesLookupFailed = false;
 		} catch {
 			resource = null;
 		}
 
 		if (!resource?.messages?.length) {
-			throw new ApiError("not_found", "Message thread not found.", 404);
+			throwMessageThreadNotFound(messagesId, dealLookupFailed, messagesLookupFailed);
 		}
 
 		const lines = sortMessagesChronological(resource.messages ?? []);
 
-		return res.json({
+		const payload = {
 			thread: {
-				messagesId: resource.messagesId ?? messagesId,
-				dealId: messagesId,
+				messagesId: resource.messagesId ?? componentId,
+				dealId: deal?.dealId ?? (dealIdQuery || messagesId),
+				consumerName: deal
+					? [deal.consumer?.firstName, deal.consumer?.lastName]
+							.filter(Boolean)
+							.join(" ") || null
+					: null,
+				consumerEmail: deal?.consumer?.email ?? null,
 				consumerLastRead: resource.consumerLastRead ?? null,
 				consumerLastReadStatus: resource.consumerLastReadStatus ?? null,
 				advertiserLastRead: resource.advertiserLastRead ?? null,
 				advertiserLastReadStatus: resource.advertiserLastReadStatus ?? null,
 				messages: lines,
+				pagesLoaded: resource.pagesLoaded ?? 1,
 			},
-		});
+		};
+		setCachedResponse(detailKey, payload, AUTOTRADER_RESPONSE_TTL_MS.messageDetail);
+		return res.json(payload);
 	} catch (e) {
 		return next(e);
 	}
 }
 
-/** PATCH /messages/{messagesId} — requires Message Updates capability. */
+export async function getAutotraderDealById(
+	req: Request,
+	res: Response,
+	next: NextFunction,
+) {
+	try {
+		const dealId = req.params.dealId?.trim();
+		if (!dealId) {
+			throw new ApiError("invalid_payload", "dealId is required.", 400);
+		}
+		const deal = await getDealById(dealId);
+		return res.json({ deal });
+	} catch (e) {
+		return next(e);
+	}
+}
+
+/** PATCH /messages/{messagesComponentId} — requires Message Updates capability. */
 export async function markAutotraderMessagesRead(
 	req: Request,
 	res: Response,
@@ -279,17 +436,15 @@ export async function markAutotraderMessagesRead(
 		}
 
 		const { advertiserId } = getAutotraderConfig();
-		await autotraderFetch(
-			`/messages/${encodeURIComponent(messagesId)}`,
-			{ advertiserId },
-			{
-				method: "PATCH",
-				body: { advertiserLastReadStatus: "Read" },
-			},
+		await markMessagesComponentRead(messagesId);
+
+		invalidateAutotraderCache(cacheKey(["messages", "list", advertiserId]));
+		invalidateAutotraderCache(
+			cacheKey(["messages", "detail", advertiserId, messagesId]),
 		);
 
 		const resource = await fetchMessageThread(messagesId);
-		return res.json({
+		const payload = {
 			thread: {
 				messagesId: resource.messagesId ?? messagesId,
 				dealId: messagesId,
@@ -299,7 +454,13 @@ export async function markAutotraderMessagesRead(
 				advertiserLastReadStatus: resource.advertiserLastReadStatus ?? null,
 				messages: sortMessagesChronological(resource.messages ?? []),
 			},
-		});
+		};
+		setCachedResponse(
+			cacheKey(["messages", "detail", advertiserId, messagesId]),
+			payload,
+			AUTOTRADER_RESPONSE_TTL_MS.messageDetail,
+		);
+		return res.json(payload);
 	} catch (e) {
 		return next(e);
 	}
@@ -307,7 +468,10 @@ export async function markAutotraderMessagesRead(
 
 const MAX_MESSAGE_CHARS = 1500;
 
-/** POST /messages — requires Message Updates capability. */
+/**
+ * POST /messages/?advertiserId=… — Deal Management Messages API.
+ * Reply: { messagesId, text }. New thread: { dealId, text }.
+ */
 export async function sendAutotraderMessage(
 	req: Request,
 	res: Response,
@@ -320,13 +484,18 @@ export async function sendAutotraderMessage(
 			typeof req.body?.messagesId === "string"
 				? req.body.messagesId.trim()
 				: "";
-		const message =
-			typeof req.body?.message === "string" ? req.body.message.trim() : "";
+		const text = (
+			typeof req.body?.text === "string"
+				? req.body.text
+				: typeof req.body?.message === "string"
+					? req.body.message
+					: ""
+		).trim();
 
-		if (!message) {
-			throw new ApiError("invalid_payload", "message is required.", 400);
+		if (!text) {
+			throw new ApiError("invalid_payload", "text is required.", 400);
 		}
-		if (message.length > MAX_MESSAGE_CHARS) {
+		if (text.length > MAX_MESSAGE_CHARS) {
 			throw new ApiError(
 				"invalid_payload",
 				`Message must be at most ${MAX_MESSAGE_CHARS} characters.`,
@@ -342,21 +511,19 @@ export async function sendAutotraderMessage(
 		}
 
 		const { advertiserId } = getAutotraderConfig();
-		const body: { message: string; dealId?: string; messagesId?: string } = {
-			message,
-		};
-		if (messagesId) body.messagesId = messagesId;
-		else body.dealId = dealId;
 
-		const created = await autotraderFetch<{
-			messagesId?: string;
-			message?: string;
-		}>("/messages", { advertiserId }, { method: "POST", body });
+		const created = messagesId
+			? await postMessagesComponent({ messagesId, text })
+			: await postMessagesComponent({ dealId, text });
 
 		const threadId = created.messagesId ?? messagesId ?? dealId;
-		const resource = await fetchMessageThread(threadId);
+		invalidateAutotraderCache(cacheKey(["messages", "list", advertiserId]));
+		invalidateAutotraderCache(
+			cacheKey(["messages", "detail", advertiserId, threadId]),
+		);
 
-		return res.json({
+		const resource = await fetchMessageThread(threadId);
+		const payload = {
 			created,
 			thread: {
 				messagesId: resource.messagesId ?? threadId,
@@ -367,7 +534,13 @@ export async function sendAutotraderMessage(
 				advertiserLastReadStatus: resource.advertiserLastReadStatus ?? null,
 				messages: sortMessagesChronological(resource.messages ?? []),
 			},
-		});
+		};
+		setCachedResponse(
+			cacheKey(["messages", "detail", advertiserId, threadId]),
+			{ thread: payload.thread },
+			AUTOTRADER_RESPONSE_TTL_MS.messageDetail,
+		);
+		return res.json(payload);
 	} catch (e) {
 		return next(e);
 	}

@@ -17,8 +17,10 @@ import {
 	adminSetRolePermissions,
 } from "../modules/admin/permissions";
 import {
+	getAutotraderDealById,
 	getAutotraderMessagesById,
 	listAutotraderMessages,
+	lookupAutotraderMessages,
 	markAutotraderMessagesRead,
 	sendAutotraderMessage,
 } from "../modules/autotrader/messages";
@@ -124,10 +126,22 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
 	);
 
 	app.get(
+		"/api/autotrader/messages/lookup",
+		requireUser,
+		requirePermission("vehicles:read"),
+		asyncHandler(lookupAutotraderMessages),
+	);
+	app.get(
 		"/api/autotrader/messages",
 		requireUser,
 		requirePermission("vehicles:read"),
 		asyncHandler(listAutotraderMessages),
+	);
+	app.get(
+		"/api/autotrader/deals/:dealId",
+		requireUser,
+		requirePermission("vehicles:read"),
+		asyncHandler(getAutotraderDealById),
 	);
 	app.get(
 		"/api/autotrader/messages/:messagesId",

@@ -5,6 +5,7 @@ export type ApiErrorCode =
 	| "autotrader_not_configured"
 	| "autotrader_auth_failed"
 	| "autotrader_api_error"
+	| "autotrader_capability_disabled"
 	| "invalid_payload"
 	| "missing_id"
 	| "not_found"

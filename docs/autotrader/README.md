@@ -175,6 +175,17 @@ Auto Trader pushes realtime events to your **HTTPS endpoint** via **PUT** with J
 **Security:** header `AutoTrader-Signature` (or `autotrader-signature`) with `t=<epoch>` and `v1=<hmac>`.
 
 - HMAC-SHA256 over: `{t}.{raw JSON body}` using secret `sk_test_...` (sandbox) or `sk_live_...` (live).
+
+### Messages API (Deal Management — partner Postman collection)
+
+| Action | Method | Path | Body |
+|--------|--------|------|------|
+| Get thread | GET | `/messages/{messagesComponentId}?advertiserId=` | — |
+| Mark read | PATCH | `/messages/{messagesComponentId}?advertiserId=` | `{ "advertiserLastReadStatus": "Read" }` |
+| New thread | POST | `/messages/?advertiserId=` | `{ "dealId", "text" }` |
+| Reply | POST | `/messages/?advertiserId=` | `{ "messagesId", "text" }` |
+
+`messagesComponentId` comes from the deal’s `messages.id` field. Asahi maps API `message` → Auto Trader `text` on send.
 - Allow traffic from domain **autotrader.co.uk** if using firewall rules.
 
 **Retries:** non-2xx → retry at **10s**, **30s**, **30m**. Use `time` to dedupe superseded events.

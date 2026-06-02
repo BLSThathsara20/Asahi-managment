@@ -41,6 +41,44 @@ function capabilityEligible(
 	);
 }
 
+let capabilitiesCache: {
+	at: number;
+	dealSyncEligible: boolean;
+	dealUpdatesEligible: boolean;
+	messageUpdatesEligible: boolean;
+	advertiserName: string | null;
+} | null = null;
+
+const CAPABILITIES_CACHE_MS = 5 * 60 * 1000;
+
+export async function getAdvertiserCapabilities() {
+	if (
+		capabilitiesCache &&
+		Date.now() - capabilitiesCache.at < CAPABILITIES_CACHE_MS
+	) {
+		return capabilitiesCache;
+	}
+
+	const { advertiserId } = getAutotraderConfig();
+	const advertisers = await autotraderFetch<AdvertisersResponse>(
+		"/advertisers",
+		{ page: 1, pageSize: 5 },
+	);
+	const row =
+		advertisers.results?.find((a) => a.advertiserId === advertiserId) ??
+		advertisers.results?.[0];
+	const atConnect = row?.capabilities?.atConnect;
+
+	capabilitiesCache = {
+		at: Date.now(),
+		dealSyncEligible: capabilityEligible(atConnect, "Deal Sync"),
+		dealUpdatesEligible: capabilityEligible(atConnect, "Deal Updates"),
+		messageUpdatesEligible: capabilityEligible(atConnect, "Message Updates"),
+		advertiserName: row?.name ?? null,
+	};
+	return capabilitiesCache;
+}
+
 async function probeLeadsApi(): Promise<boolean> {
 	try {
 		await autotraderFetch("/service/leads-v1/leads/summary", {
@@ -58,8 +96,8 @@ export async function getAutotraderConnectStatus(
 ): Promise<AutotraderConnectStatus> {
 	const { env, advertiserId } = getAutotraderConfig();
 
-	const [advertisers, stock, leadsApiAccessible] = await Promise.all([
-		autotraderFetch<AdvertisersResponse>("/advertisers", { page: 1, pageSize: 5 }),
+	const [caps, stock, leadsApiAccessible] = await Promise.all([
+		getAdvertiserCapabilities(),
 		autotraderFetch<StockListResponse>("/stock", {
 			advertiserId,
 			page: 1,
@@ -68,24 +106,21 @@ export async function getAutotraderConnectStatus(
 		probeLeadsApi(),
 	]);
 
-	const row =
-		advertisers.results?.find((a) => a.advertiserId === advertiserId) ??
-		advertisers.results?.[0];
-	const atConnect = row?.capabilities?.atConnect;
-
-	const dealSyncEligible = capabilityEligible(atConnect, "Deal Sync");
-	const dealUpdatesEligible = capabilityEligible(atConnect, "Deal Updates");
-	const messageUpdatesEligible = capabilityEligible(
-		atConnect,
-		"Message Updates",
-	);
+	const dealSyncEligible = caps.dealSyncEligible;
+	const dealUpdatesEligible = caps.dealUpdatesEligible;
+	const messageUpdatesEligible = caps.messageUpdatesEligible;
 
 	let whyEmpty: string | null = null;
 	if (dealsInConnectApi === 0) {
 		const parts: string[] = [
-			"Per Auto Trader docs: list threads via Deals API (messagesId on each deal), then GET /messages/{messagesId} — Deal Sync capability. Read and replied messages are included.",
-			"The Connect API currently returns 0 deals, so there is nothing to fetch — portal inbox may not be synced yet.",
+			"Asahi uses the [NEW] Capabilities Messages API (GET/PATCH /messages/{messagesComponentId}, POST /messages/ with text) — not the deprecated Leads inbox API.",
+			"To list threads we need deals from GET /deals; your Connect API currently returns 0 deals, so new messages on the portal will not appear here until deals sync into Connect.",
 		];
+		if (env === "sandbox") {
+			parts.push(
+				"You are on AUTOTRADER_ENV=sandbox. Live portal messages (portal.autotrader.co.uk) usually require production API keys — sandbox and live are separate.",
+			);
+		}
 		if (!dealUpdatesEligible || !messageUpdatesEligible) {
 			parts.push(
 				`Your sandbox advertiser has Deal Updates: ${dealUpdatesEligible ? "yes" : "no"}, Message Updates: ${messageUpdatesEligible ? "yes" : "no"}. Ask Auto Trader (partner.support@autotrader.co.uk) to enable these for Connect if portal inbox messages should sync.`,
@@ -107,7 +142,7 @@ export async function getAutotraderConnectStatus(
 	return {
 		environment: env,
 		advertiserId,
-		advertiserName: row?.name ?? null,
+		advertiserName: caps.advertiserName,
 		stockInConnectApi: stock.totalResults ?? 0,
 		dealSyncEligible,
 		dealUpdatesEligible,

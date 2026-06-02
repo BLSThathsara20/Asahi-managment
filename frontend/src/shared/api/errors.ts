@@ -5,6 +5,7 @@ export type ApiErrorCode =
 	| "autotrader_not_configured"
 	| "autotrader_auth_failed"
 	| "autotrader_api_error"
+	| "autotrader_capability_disabled"
 	| "invalid_payload"
 	| "missing_id"
 	| "not_found"
@@ -41,6 +42,8 @@ const FRIENDLY: Record<string, string> = {
 		"Auto Trader is not configured. Add AUTOTRADER_* to backend/.env and restart the server.",
 	autotrader_auth_failed: "Auto Trader authentication failed. Check your API key and secret.",
 	autotrader_api_error: "Auto Trader request failed.",
+	autotrader_capability_disabled:
+		"Message Updates is not enabled on your Auto Trader API key. Ask Auto Trader to enable it for send/reply/mark-read.",
 	internal_error: "Something went wrong. Please try again.",
 	invalid_payload: "Invalid request. Check your input and try again.",
 	missing_id: "Missing required id.",

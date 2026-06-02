@@ -98,12 +98,17 @@ export default function AutotraderMessagesDetailPage() {
 
 			{error && (
 				<div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
-					<p className="font-medium">Could not complete request</p>
-					<p className="mt-1 opacity-90">{error}</p>
-					<p className="mt-2 text-xs opacity-80">
-						Marking read and sending replies need Auto Trader{" "}
-						<strong>Message Updates</strong> on your API key (separate from Deal
-						Sync for viewing).
+					<p className="font-medium">Could not load this thread</p>
+					<p className="mt-2 leading-relaxed opacity-95">{error}</p>
+					<p className="mt-3 text-xs opacity-80">
+						If this deal opens on{" "}
+						<strong>portal.autotrader.co.uk</strong> but fails here, your backend
+						is probably on <strong>sandbox</strong> API — live portal deals are not
+						in sandbox. Use production API keys and{" "}
+						<code className="rounded bg-rose-100 px-1 dark:bg-rose-900/50">
+							AUTOTRADER_ENV=production
+						</code>{" "}
+						in backend/.env.
 					</p>
 				</div>
 			)}
@@ -144,7 +149,13 @@ export default function AutotraderMessagesDetailPage() {
 						</p>
 					</Card>
 
-					<Card title={`Conversation (${thread.messages.length})`}>
+					<Card
+						title={`Conversation (${thread.messages.length})${
+							thread.pagesLoaded && thread.pagesLoaded > 1
+								? ` · ${thread.pagesLoaded} API pages`
+								: ""
+						}`}
+					>
 						<div className="space-y-3">
 							{thread.messages.map((line, i) => (
 								<MessageBubble key={`${line.at}-${line.from}-${i}`} line={line} />

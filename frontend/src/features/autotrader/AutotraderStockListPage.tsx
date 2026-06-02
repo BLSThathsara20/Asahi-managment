@@ -63,6 +63,7 @@ export default function AutotraderStockListPage() {
 		page,
 		totalPages,
 		loading,
+		refreshing,
 		error,
 		reload,
 		goToPage,
@@ -83,11 +84,16 @@ export default function AutotraderStockListPage() {
 						variant="secondary"
 						size="sm"
 						leftIcon={<RefreshCw className="h-4 w-4" />}
-						isLoading={loading}
-						onClick={() => reload()}
+						isLoading={loading || refreshing}
+						onClick={() => void reload(true)}
 					>
 						Refresh
 					</Button>
+					{refreshing && !loading && (
+						<span className="text-xs text-slate-500 dark:text-slate-400">
+							Updating…
+						</span>
+					)}
 					{!loading && (
 						<span className="text-sm text-slate-600 dark:text-slate-400">
 							{totalResults} vehicle{totalResults === 1 ? "" : "s"}

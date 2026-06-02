@@ -45,9 +45,12 @@ export type AutotraderMessagesListResponse = {
 export type AutotraderMessageThreadDetail = {
 	messagesId: string;
 	dealId: string;
+	consumerName?: string | null;
+	consumerEmail?: string | null;
 	consumerLastRead: string | null;
 	consumerLastReadStatus: string | null;
 	advertiserLastRead: string | null;
 	advertiserLastReadStatus: string | null;
 	messages: AutotraderMessageLine[];
+	pagesLoaded?: number;
 };
