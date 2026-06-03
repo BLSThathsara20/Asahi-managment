@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch } from "../../shared/api/client";
 import { getErrorMessage } from "../../shared/api/errors";
 import {
-	AUTOTRADER_CACHE_TTL,
 	getCached,
-	invalidateCached,
-	isCacheFresh,
-	setCached,
+	AUTOTRADER_CACHE_TTL,
 } from "../../shared/lib/resourceCache";
+import {
+	fetchAutotraderMessagesList,
+	getMessagesListCacheKey,
+	invalidateAutotraderMessagesListCache,
+} from "./fetchMessagesList";
 import type { AutotraderMessagesListResponse } from "./messageTypes";
 
-const CACHE_KEY = "autotrader:messages:list:v1";
-
 export function useAutotraderMessages() {
-	const cached = useMemo(() => getCached<AutotraderMessagesListResponse>(CACHE_KEY), []);
+	const cacheKey = getMessagesListCacheKey();
+	const cached = useMemo(
+		() => getCached<AutotraderMessagesListResponse>(cacheKey),
+		[cacheKey],
+	);
 
 	const [data, setData] = useState<AutotraderMessagesListResponse | null>(
 		cached?.data ?? null,
@@ -23,44 +26,25 @@ export function useAutotraderMessages() {
 	const [error, setError] = useState<string | null>(null);
 
 	const load = useCallback(async (options?: { force?: boolean }) => {
-		const entry = getCached<AutotraderMessagesListResponse>(CACHE_KEY);
-		const emptyList =
-			entry?.data?.totalDeals === 0 && (entry?.data?.threads?.length ?? 0) === 0;
-		const cacheTtl = emptyList
-			? AUTOTRADER_CACHE_TTL.emptyMessagesListMs
-			: AUTOTRADER_CACHE_TTL.messagesListMs;
-
-		if (!options?.force && entry && isCacheFresh(entry, cacheTtl)) {
-			setData(entry.data);
-			setError(null);
-			setLoading(false);
-			setRefreshing(false);
-			return;
-		}
-
+		const entry = getCached<AutotraderMessagesListResponse>(cacheKey);
 		const hasData = Boolean(entry?.data ?? data);
+
 		if (hasData && !options?.force) setRefreshing(true);
 		else setLoading(true);
 		setError(null);
 
 		try {
-			const refresh = options?.force ? "?refresh=1" : "";
-			const res = await apiFetch<AutotraderMessagesListResponse>(
-				`/api/autotrader/messages${refresh}`,
-			);
+			const res = await fetchAutotraderMessagesList({
+				force: options?.force,
+			});
 			setData(res);
-			if (res.totalDeals > 0 || res.threads.length > 0) {
-				setCached(CACHE_KEY, res);
-			} else {
-				invalidateCached(CACHE_KEY);
-			}
 		} catch (e) {
 			setError(getErrorMessage(e));
 		} finally {
 			setLoading(false);
 			setRefreshing(false);
 		}
-	}, []);
+	}, [cacheKey, data]);
 
 	useEffect(() => {
 		void load();
@@ -78,7 +62,7 @@ export function useAutotraderMessages() {
 		refreshing,
 		error,
 		reload: (force = false) => {
-			if (force) invalidateCached(CACHE_KEY);
+			if (force) invalidateAutotraderMessagesListCache();
 			return load({ force });
 		},
 	};

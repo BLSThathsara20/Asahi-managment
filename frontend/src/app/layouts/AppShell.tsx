@@ -13,8 +13,19 @@ import {
 } from "lucide-react";
 import ThemeToggle from "../../shared/ui/ThemeToggle";
 import Button from "../../shared/ui/Button";
+import NotificationBell from "../../shared/ui/NotificationBell";
 import { useAuth } from "../providers/AuthProvider";
+import { useNotificationsOptional } from "../providers/NotificationProvider";
 import { cn } from "../../shared/lib/cn";
+
+function NavUnreadBadge({ count }: { count: number }) {
+	if (count <= 0) return null;
+	return (
+		<span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
+			{count > 99 ? "99+" : count}
+		</span>
+	);
+}
 
 export default function AppShell({
 	title,
@@ -32,6 +43,8 @@ export default function AppShell({
 		!location.pathname.startsWith("/autotrader/messages");
 	const messagesActive = location.pathname.startsWith("/autotrader/messages");
 	const [mobileNavOpen, setMobileNavOpen] = useState(false);
+	const notifications = useNotificationsOptional();
+	const unreadMessages = notifications?.unreadCount ?? 0;
 
 	return (
 		<>
@@ -100,7 +113,7 @@ export default function AppShell({
 								<MessageSquare className="h-4 w-4" />
 								Messages
 							</span>
-							<ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+							<NavUnreadBadge count={unreadMessages} />
 						</NavLink>
 
 						{isAdmin && (
@@ -165,6 +178,7 @@ export default function AppShell({
 								)}
 							</div>
 							<div className="flex items-center gap-2">
+								<NotificationBell />
 								<ThemeToggle />
 								<Button variant="secondary" onClick={() => logout()}>
 									Log out
@@ -260,7 +274,7 @@ export default function AppShell({
 								<MessageSquare className="h-4 w-4" />
 								Messages
 							</span>
-							<ChevronRight className="h-4 w-4 opacity-60" />
+							<NavUnreadBadge count={unreadMessages} />
 						</NavLink>
 
 						{isAdmin && (

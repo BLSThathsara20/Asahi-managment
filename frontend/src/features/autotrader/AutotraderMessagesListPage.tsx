@@ -10,6 +10,7 @@ import { apiFetch } from "../../shared/api/client";
 import { useErrorNotification } from "../../shared/hooks/useErrorNotification";
 import { useNotify } from "../../shared/ui/ToastProvider";
 import { getErrorMessage } from "../../shared/api/errors";
+import { useNotificationsOptional } from "../../app/providers/NotificationProvider";
 import { useAutotraderMessages } from "./useAutotraderMessages";
 import type { AutotraderMessageThreadSummary } from "./messageTypes";
 
@@ -74,6 +75,7 @@ function ThreadRow({ thread }: { thread: AutotraderMessageThreadSummary }) {
 export default function AutotraderMessagesListPage() {
 	const navigate = useNavigate();
 	const notify = useNotify();
+	const notifications = useNotificationsOptional();
 	const [dealIdInput, setDealIdInput] = useState("");
 	const [messageIdInput, setMessageIdInput] = useState("");
 	const [lookupLoading, setLookupLoading] = useState(false);
@@ -239,7 +241,11 @@ export default function AutotraderMessagesListPage() {
 						size="sm"
 						leftIcon={<RefreshCw className="h-4 w-4" />}
 						isLoading={loading || refreshing}
-						onClick={() => void reload(true)}
+						onClick={() => {
+							void reload(true).then(() =>
+								notifications?.refresh(false),
+							);
+						}}
 					>
 						Refresh all deals
 					</Button>

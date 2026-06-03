@@ -7,6 +7,7 @@ import AutotraderMessagesListPage from "./features/autotrader/AutotraderMessages
 import AutotraderMessagesDetailPage from "./features/autotrader/AutotraderMessagesDetailPage";
 import UsersAdminPage from "./features/users/UsersAdminPage";
 import { useAuth } from "./app/providers/AuthProvider";
+import { NotificationProvider } from "./app/providers/NotificationProvider";
 
 function App() {
 	const { loading, firebaseUser, appUser } = useAuth();
@@ -17,6 +18,7 @@ function App() {
 
 	return (
 		<BrowserRouter>
+			<NotificationProvider enabled={authed}>
 			<Routes>
 				<Route
 					path="/login"
@@ -77,6 +79,7 @@ function App() {
 					element={authed ? <UsersAdminPage /> : <Navigate to="/login" replace />}
 				/>
 			</Routes>
+			</NotificationProvider>
 		</BrowserRouter>
 	);
 }

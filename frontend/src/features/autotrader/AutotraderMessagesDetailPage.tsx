@@ -6,6 +6,7 @@ import Card from "../../shared/ui/Card";
 import Badge from "../../shared/ui/Badge";
 import Button from "../../shared/ui/Button";
 import Skeleton from "../../shared/ui/Skeleton";
+import { useNotificationsOptional } from "../../app/providers/NotificationProvider";
 import { useErrorNotification } from "../../shared/hooks/useErrorNotification";
 import { useNotify } from "../../shared/ui/ToastProvider";
 import { useAutotraderMessageDetail } from "./useAutotraderMessageDetail";
@@ -51,6 +52,7 @@ export default function AutotraderMessagesDetailPage() {
 	const { thread, loading, error, saving, markRead, sendReply } =
 		useAutotraderMessageDetail(messagesId);
 	const notify = useNotify();
+	const notifications = useNotificationsOptional();
 	const [reply, setReply] = useState("");
 
 	useErrorNotification(error, "Message thread error");
@@ -61,6 +63,7 @@ export default function AutotraderMessagesDetailPage() {
 		try {
 			await markRead();
 			notify.success({ title: "Marked as read" });
+			void notifications?.refresh(true);
 		} catch (e) {
 			notify.fromError(e, "Couldn’t mark as read");
 		}
@@ -74,6 +77,7 @@ export default function AutotraderMessagesDetailPage() {
 			await sendReply(text);
 			setReply("");
 			notify.success({ title: "Reply sent" });
+			void notifications?.refresh(true);
 		} catch (e) {
 			notify.fromError(e, "Couldn’t send reply");
 		}

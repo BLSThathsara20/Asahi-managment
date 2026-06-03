@@ -29,6 +29,8 @@ export default function InventoryDashboardPage() {
 	const [adding, setAdding] = useState(false);
 	const isGuest = appUser?.role === "guest";
 
+	useErrorNotification(error, "Couldn’t load vehicles");
+
 	return (
 		<AppShell title="Dashboard">
 			<Card title="Vehicles">
